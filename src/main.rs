@@ -1,6 +1,16 @@
 #[macro_use]
 extern crate rocket;
-use rocket::{futures::{channel::mpsc, SinkExt, StreamExt}, response::stream::{Event, EventStream}, tokio::{self, time::{interval, sleep, Duration, Instant}}};
+use std::io;
+
+use rocket::{
+    futures::{SinkExt, StreamExt, channel::mpsc},
+    response::stream::{Event, EventStream},
+    tokio::{
+        self,
+        task::spawn_blocking,
+        time::{Duration, Instant, interval, sleep},
+    },
+};
 
 #[get("/")]
 fn index() -> &'static str {
@@ -32,12 +42,20 @@ async fn stream_delay(seconds: u64) -> EventStream![] {
             interval_timer.tick().await;
             elapsed_seconds += 1;
 
-            if let Err(_) = sender.send(format!("Elapsed: {} of {} seconds", elapsed_seconds, total_seconds)).await {
+            if let Err(_) = sender
+                .send(format!(
+                    "Elapsed: {} of {} seconds",
+                    elapsed_seconds, total_seconds
+                ))
+                .await
+            {
                 break;
             }
         }
 
-        let _ = sender.send(format!("Complete! Total time: {:?}", start.elapsed())).await;
+        let _ = sender
+            .send(format!("Complete! Total time: {:?}", start.elapsed()))
+            .await;
     });
 
     EventStream! {
@@ -47,7 +65,19 @@ async fn stream_delay(seconds: u64) -> EventStream![] {
     }
 }
 
+#[get("/blocking_task")]
+async fn blocking_task() -> io::Result<Vec<u8>> {
+    let vec = spawn_blocking(|| std::fs::read("src/data.txt"))
+        .await
+        .map_err(|e| io::Error::new(io::ErrorKind::Interrupted, e))??;
+
+    Ok(vec)
+}
+
 #[launch]
 fn rocket() -> _ {
-    rocket::build().mount("/", routes![index, echo, delay, stream_delay])
+    rocket::build().mount(
+        "/",
+        routes![index, echo, delay, stream_delay, blocking_task],
+    )
 }
